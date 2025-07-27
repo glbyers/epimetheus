@@ -464,7 +464,7 @@ func (s *Server) getEtcdAlarms(c *gin.Context) {
 		c.IndentedJSON(http.StatusExpectationFailed, alarms)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "No alarms present"})
+	c.IndentedJSON(http.StatusOK, gin.H{"message": "No alarms present"})
 }
 
 func (s *Server) getNodes(c *gin.Context) {
