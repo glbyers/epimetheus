@@ -47,13 +47,13 @@ func main() {
 	if val, ok := os.LookupEnv("AUTH_USERNAME"); ok {
 		username = val
 	} else {
-		username = "zabbix"
+		username = "ghost"
 	}
 
 	if val, ok := os.LookupEnv("AUTH_PASSWORD"); ok {
 		password = val
 	} else {
-		password = "53kr17"
+		password = "x0VeQnJYuCrCws2iznV6qyvP35bYDRjA"
 	}
 
 	if val, ok := os.LookupEnv("TRUSTED_PROXIES"); ok {
