@@ -78,18 +78,20 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: epimetheus
-        app.kubernetes.io/version: "v0.1"
+        app.kubernetes.io/version: "v0.2"
     spec:
       containers:
       - command:
         - /app
-        image: registry.zerobytesfree.net/k8s/epimetheus:v0.1
+        image: registry.zerobytesfree.net/k8s/epimetheus:v0.2
         name: epimetheus
         env:
         - name: GIN_MODE
           value: release
         - name: LISTEN_ADDRESS
           value: "0.0.0.0:8080"
+        - name: TRUSTED_PROXIES
+          value: "10.0.46.1"
         - name: AUTH_USERNAME
           valueFrom:
             secretKeyRef:
