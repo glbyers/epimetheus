@@ -288,7 +288,9 @@ func (s *Server) getServiceList(c *gin.Context) {
 	}
 
 	status := http.StatusOK
-	healthUnknown := []string{"dashboard", "ext-iscsid", "ext-qemu-guest-agent"}
+	// Services that never report healthy, but do report running. Maybe we
+	// exclude all extension services?
+	healthUnknown := []string{"dashboard", "ext-iscsid", "ext-qemu-guest-agent", "ext-lldpd"}
 	for _, nodeService := range serviceList {
 		for _, svc := range nodeService.Services {
 			response.Services = append(response.Services, &client.ServiceInfo{
