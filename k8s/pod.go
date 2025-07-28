@@ -18,8 +18,8 @@ type Pod struct {
 func NewPod(pod *corev1.Pod) *Pod {
 	p := Pod{Pod: pod}
 
-	p.Name = p.Pod.Name
-	p.Namespace = p.Pod.Namespace
+	p.SimplePod.Name = p.Pod.Name
+	p.SimplePod.Namespace = p.Pod.Namespace
 	p.SimplePod.Status = &p.Pod.Status
 
 	return &p

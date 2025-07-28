@@ -90,10 +90,10 @@ func (c *Client) GetNodes() ([]*Node, error) {
 	return nodes, nil
 }
 
-func (c *Client) GetNodesByLabel(label string) ([]*Node, error) {
+func (c *Client) GetNodesByRole(role string) ([]*Node, error) {
 	var nodes []*Node
 
-	if label == "" {
+	if role == "" {
 		nodeList, err := c.GetNodes()
 		if err != nil {
 			return nil, err
@@ -101,7 +101,7 @@ func (c *Client) GetNodesByLabel(label string) ([]*Node, error) {
 		nodes = nodeList
 	} else {
 		nodeList, err := c.conn.CoreV1().Nodes().List(
-			context.Background(), metav1.ListOptions{LabelSelector: label})
+			context.Background(), metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/" + role})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, err.Error())
 			return nil, err

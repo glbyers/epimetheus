@@ -1,6 +1,6 @@
 # Epimetheus
 
-Epimetheus is known as the God of the "afterthough" or "hindsight" in Greek
+Epimetheus is known as the God of the "afterthought" or "hindsight" in Greek
 mythology. Given that monitoring is often tacked on at the end of a project,
 the name seemed fitting.
 
