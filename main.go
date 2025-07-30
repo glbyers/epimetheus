@@ -241,10 +241,10 @@ func (s *Server) getNodeStatus(c *gin.Context) {
 		// All conditions except NodeReady should be false
 		if cond.Type != corev1.NodeReady && cond.Status != corev1.ConditionFalse {
 			status = http.StatusExpectationFailed
-			response.Errors = append(response.Errors, cond.Message)
+			response.Errors = append(response.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
 		} else if cond.Type == corev1.NodeReady && cond.Status != corev1.ConditionTrue {
 			status = http.StatusExpectationFailed
-			response.Errors = append(response.Errors, cond.Message)
+			response.Errors = append(response.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
 		}
 	}
 
