@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	"strings"
 )
@@ -14,6 +15,11 @@ type SimpleNode struct {
 type Node struct {
 	SimpleNode
 	*corev1.Node
+}
+
+type NodeStatus struct {
+	Node   *Node    `json:"node"`
+	Errors []string `json:"errors"`
 }
 
 func NewNode(node *corev1.Node) *Node {
@@ -43,6 +49,19 @@ func (n *Node) GetAddress(addrType corev1.NodeAddressType) (address string) {
 	for _, addr := range n.Node.Status.Addresses {
 		if addr.Type == addrType {
 			address = addr.Address
+		}
+	}
+	return
+}
+
+func (n *Node) Status() (status NodeStatus) {
+	status.Node = n
+	for _, cond := range n.Node.Status.Conditions {
+		// All conditions except NodeReady should be false
+		if cond.Type != corev1.NodeReady && cond.Status != corev1.ConditionFalse {
+			status.Errors = append(status.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
+		} else if cond.Type == corev1.NodeReady && cond.Status != corev1.ConditionTrue {
+			status.Errors = append(status.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
 		}
 	}
 	return

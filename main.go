@@ -3,19 +3,20 @@ package main
 import (
 	"github.com/glbyers/epimetheus/k8s"
 	"github.com/glbyers/epimetheus/talos"
+	"github.com/thanhpk/randstr"
+	"os"
+	"strings"
 
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/alecthomas/units"
 	"github.com/gin-gonic/gin"
-	"github.com/thanhpk/randstr"
 
-	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	"github.com/siderolabs/talos/pkg/machinery/api/common"
+	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
 
 	corev1 "k8s.io/api/core/v1"
@@ -23,43 +24,22 @@ import (
 )
 
 type Server struct {
-	k8s    *k8s.Client
-	talos  *talos.Client
-	router *gin.Engine
+	k8s   *k8s.Client
+	talos *talos.Client
+	*gin.Engine
+}
+type Args struct {
+	Listen   string
+	Username string
+	Password string
+	Server   *Server
 }
 
 func main() {
-	var (
-		listen   string
-		username string
-		password string
-	)
+	args := setup()
 
-	listen = getEnv("LISTEN_ADDRESS", "127.0.0.1:8080")
-	username = getEnv("AUTH_USERNAME", "ghost")
-
-	if val, ok := os.LookupEnv("AUTH_PASSWORD"); ok {
-		password = val
-	} else {
-		password = randstr.String(32)
-		fmt.Printf("WARNING: Using randomly generated credentials: %s:%s\n", username, password)
-	}
-
-	r := gin.New()
-	s := NewServer(k8s.Connect(), talos.Connect(), r)
-
-	if val, ok := os.LookupEnv("TRUSTED_PROXIES"); ok {
-		err := r.SetTrustedProxies(strings.Split(val, ","))
-
-		if err != nil {
-			contextErr := fmt.Errorf("error setting trusted proxies: %v", err)
-			panic(contextErr)
-		}
-	} else {
-		r.SetTrustedProxies(nil)
-	}
-
-	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+	s := args.Server
+	s.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
 		return fmt.Sprintf("%s - [%s] \"%s %s %s %d %s \"%s\" %s\"\n",
 			param.ClientIP,
 			param.TimeStamp.Format(time.RFC1123),
@@ -72,7 +52,7 @@ func main() {
 			param.ErrorMessage,
 		)
 	}))
-	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+	s.Use(gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		if err, ok := recovered.(string); ok {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		}
@@ -80,13 +60,13 @@ func main() {
 	}))
 
 	// Anonymous endpoint for liveness & readiness probes
-	r.GET("/ping", func(c *gin.Context) {
+	s.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
 	})
 
 	// All /v1 endpoints require basic auth
-	v1 := r.Group("/v1", gin.BasicAuth(gin.Accounts{
-		username: password,
+	v1 := s.Group("/v1", gin.BasicAuth(gin.Accounts{
+		args.Username: args.Password,
 	}))
 
 	v1.GET("/service", s.getServiceList)
@@ -101,6 +81,8 @@ func main() {
 	v1.GET("/staticpod", s.getStaticPods)
 	v1.GET("/staticpod/:namespace", s.getStaticPods)
 
+	v1.GET("/images", s.getImages)
+
 	{
 		nodes := v1.Group("/nodes")
 		nodes.GET("", s.getNodes)
@@ -113,29 +95,45 @@ func main() {
 		nodes.GET("/:name/staticpod/:namespace", s.getStaticPods)
 	}
 
-	r.NoRoute(func(c *gin.Context) {
+	s.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "Page not found"})
 	})
-	r.NoMethod(func(c *gin.Context) {
+	s.NoMethod(func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"message": "Method not allowed"})
 	})
 
-	err := s.router.Run(listen)
-	if err != nil {
+	if err := s.Run(args.Listen); err != nil {
 		panic(err.Error())
 	}
 }
 
-func NewServer(k *k8s.Client, t *talos.Client, r *gin.Engine) *Server {
-	return &Server{
-		k8s:    k,
-		talos:  t,
-		router: r,
+func setup() *Args {
+	args := Args{
+		Listen:   getEnv("LISTEN_ADDRESS", "127.0.0.1:8080"),
+		Username: getEnv("AUTH_USERNAME", "ghost"),
+		Password: os.Getenv("AUTH_PASSWORD"),
 	}
-}
 
-func (s *Server) Run(addr string) error {
-	return s.router.Run(addr)
+	if args.Password == "" {
+		args.Password = randstr.String(32)
+		fmt.Printf("WARNING: Using randomly generated credentials: %s:%s\n", args.Username, args.Password)
+	}
+
+	args.Server = &Server{
+		k8s:    k8s.New(),
+		talos:  talos.New(),
+		Engine: gin.New(),
+	}
+
+	if val, ok := os.LookupEnv("TRUSTED_PROXIES"); ok {
+		err := args.Server.SetTrustedProxies(strings.Split(val, ","))
+		if err != nil {
+			contextErr := fmt.Errorf("error setting trusted proxies: %v", err)
+			panic(contextErr)
+		}
+	}
+
+	return &args
 }
 
 func (s *Server) getPods(c *gin.Context) {
@@ -221,36 +219,6 @@ func (s *Server) getStaticPods(c *gin.Context) {
 	c.IndentedJSON(status, response)
 }
 
-func (s *Server) getNodeStatus(c *gin.Context) {
-	var (
-		response struct {
-			Status *corev1.NodeStatus `json:"status"`
-			Errors []string           `json:"errors"`
-		}
-	)
-
-	node, err := s.k8s.GetNode(c.Param("name"))
-	if err != nil {
-		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
-	}
-
-	status := http.StatusOK
-	response.Status = &node.Status
-	for _, cond := range node.Status.Conditions {
-		// All conditions except NodeReady should be false
-		if cond.Type != corev1.NodeReady && cond.Status != corev1.ConditionFalse {
-			status = http.StatusExpectationFailed
-			response.Errors = append(response.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
-		} else if cond.Type == corev1.NodeReady && cond.Status != corev1.ConditionTrue {
-			status = http.StatusExpectationFailed
-			response.Errors = append(response.Errors, fmt.Sprintf("%v: %s", cond.Type, cond.Message))
-		}
-	}
-
-	c.IndentedJSON(status, response)
-}
-
 func (s *Server) getServiceList(c *gin.Context) {
 	var (
 		name     string
@@ -272,8 +240,11 @@ func (s *Server) getServiceList(c *gin.Context) {
 	} else {
 		nodeList, err := s.k8s.GetNodes()
 		if err != nil {
-			c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
+			if nodeList == nil {
+				c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+				return
+			}
+			response.Errors = append(response.Errors, err.Error())
 		}
 
 		for _, node := range nodeList {
@@ -283,8 +254,11 @@ func (s *Server) getServiceList(c *gin.Context) {
 
 	serviceList, err := s.talos.GetServiceList(nodes)
 	if err != nil {
-		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
+		if serviceList == nil {
+			c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		response.Errors = append(response.Errors, err.Error())
 	}
 
 	status := http.StatusOK
@@ -350,8 +324,11 @@ func (s *Server) getService(c *gin.Context) {
 
 	services, err := s.talos.GetServiceInfo(nodes, service)
 	if err != nil {
-		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
+		if services == nil {
+			c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		response.Errors = append(response.Errors, err.Error())
 	}
 
 	status := http.StatusOK
@@ -379,11 +356,11 @@ func (s *Server) getEtcdStatus(c *gin.Context) {
 	var (
 		leader         uint64
 		nodes          []string
-		etcdStatusList []*machineapi.EtcdStatus
+		etcdStatusList []*machine.EtcdStatus
 		minDbSize      units.Base2Bytes
 		response       struct {
-			Status []*machineapi.EtcdStatus `json:"status"`
-			Errors []string                 `json:"errors"`
+			Status []*machine.EtcdStatus `json:"status"`
+			Errors []string              `json:"errors"`
 		}
 	)
 
@@ -430,7 +407,7 @@ func (s *Server) getEtcdStatus(c *gin.Context) {
 
 func (s *Server) getEtcdAlarms(c *gin.Context) {
 	var nodes []string
-	var alarms []*machineapi.EtcdMemberAlarm
+	var alarms []*machine.EtcdMemberAlarm
 
 	// fetch internal address for control plane nodes
 	nodeList, err := s.k8s.GetNodesByRole("control-plane")
@@ -471,4 +448,50 @@ func (s *Server) getNodes(c *gin.Context) {
 	}
 
 	c.IndentedJSON(http.StatusOK, nodes)
+}
+
+func (s *Server) getNodeStatus(c *gin.Context) {
+	var (
+		status     int
+		nodeStatus k8s.NodeStatus
+	)
+
+	node, err := s.k8s.GetNode(c.Param("name"))
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	nodeStatus = node.Status()
+	if nodeStatus.Errors != nil {
+		status = http.StatusExpectationFailed
+	} else {
+		status = http.StatusOK
+	}
+	c.IndentedJSON(status, nodeStatus)
+}
+
+func (s *Server) getImages(c *gin.Context) {
+	var (
+		images []*talos.Image
+		nodes  []string
+	)
+
+	nodeList, err := s.k8s.GetNodes()
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	for _, node := range nodeList {
+		nodes = append(nodes, node.Name)
+	}
+
+	images, err = s.talos.GetImageList(nodes, common.ContainerdNamespace_NS_CRI)
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, images)
 }

@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,60 +15,43 @@ import (
 )
 
 type Client struct {
-	conn *kubernetes.Clientset
+	*kubernetes.Clientset
 }
 
-func Connect() (client *Client) {
-	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount")
-	if err != nil {
-		client = LocalAuth()
-	} else {
-		client = ClusterAuth()
+func New() *Client {
+	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount"); err != nil {
+		return LocalAuth()
 	}
-	return
+	return ClusterAuth()
 }
 
 func ClusterAuth() *Client {
-	var client Client
-
-	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err.Error())
 	}
-	// creates the clientset
-	client.conn = kubernetes.NewForConfigOrDie(config)
-
-	return &client
+	return &Client{kubernetes.NewForConfigOrDie(config)}
 }
 
 func LocalAuth() *Client {
-	var client Client
-	var kubeconfig *string
+	var kubeconfig string
 
 	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
-	flag.Parse()
 
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		panic(err.Error())
 	}
-
-	clientset := kubernetes.NewForConfigOrDie(config)
-	client.conn = clientset
-
-	return &client
+	return &Client{kubernetes.NewForConfigOrDie(config)}
 }
 
 func (c *Client) GetNode(name string) (*Node, error) {
-	node, err := c.conn.CoreV1().Nodes().Get(context.Background(), name, metav1.GetOptions{})
+	node, err := c.CoreV1().Nodes().Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())
-		return nil, err
+		return nil, fmt.Errorf("error getting node: %w", err)
 	}
 	return NewNode(node), nil
 }
@@ -77,54 +59,53 @@ func (c *Client) GetNode(name string) (*Node, error) {
 func (c *Client) GetNodes() ([]*Node, error) {
 	var nodes []*Node
 
-	nodeList, err := c.conn.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	nodeList, err := c.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())
-		return nil, err
+	}
+	if nodeList == nil {
+		return nil, fmt.Errorf("error getting nodes")
 	}
 
 	for _, node := range nodeList.Items {
 		nodes = append(nodes, NewNode(&node))
 	}
 
-	return nodes, nil
+	return nodes, err
 }
 
 func (c *Client) GetNodesByRole(role string) ([]*Node, error) {
-	var nodes []*Node
-
 	if role == "" {
-		nodeList, err := c.GetNodes()
-		if err != nil {
-			return nil, err
-		}
-		nodes = nodeList
-	} else {
-		nodeList, err := c.conn.CoreV1().Nodes().List(
-			context.Background(), metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/" + role})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, err.Error())
-			return nil, err
-		}
-
-		for _, node := range nodeList.Items {
-			nodes = append(nodes, NewNode(&node))
-		}
+		return c.GetNodes()
 	}
 
-	return nodes, nil
+	var nodes []*Node
+	nodeList, err := c.CoreV1().Nodes().List(
+		context.Background(), metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/" + role})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, err.Error())
+	}
+	if nodeList == nil {
+		return nil, fmt.Errorf("error getting nodes")
+	}
+
+	for _, node := range nodeList.Items {
+		nodes = append(nodes, NewNode(&node))
+	}
+
+	return nodes, err
 }
 
 func (c *Client) GetPods(namespace string, opts metav1.ListOptions) ([]*Pod, error) {
 	var pods []*Pod
 
-	podList, err := c.conn.CoreV1().Pods(namespace).List(
-		context.Background(), opts)
+	podList, err := c.CoreV1().Pods(namespace).List(context.Background(), opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())
-		return nil, err
 	}
-
+	if podList == nil {
+		return nil, fmt.Errorf("error getting pods")
+	}
 	for _, pod := range podList.Items {
 		pods = append(pods, NewPod(&pod))
 	}
