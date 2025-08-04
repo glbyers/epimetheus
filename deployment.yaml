@@ -83,7 +83,7 @@ spec:
       containers:
       - command:
         - /app
-        image: registry.zerobytesfree.net/k8s/epimetheus:v0.2
+        image: ghcr.io/glbyers/epimetheus:0.0.1
         name: epimetheus
         env:
         - name: GIN_MODE
