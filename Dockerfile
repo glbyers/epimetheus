@@ -1,5 +1,5 @@
 # Start by building the application.
-FROM golang:1.24 as build
+FROM golang:1.24 AS build
 
 WORKDIR /go/src/app
 COPY . .
