@@ -84,7 +84,7 @@ func main() {
 	v1.GET("/images", s.getImages)
 
 	{
-		nodes := v1.Group("/nodes")
+		nodes := v1.Group("/node")
 		nodes.GET("", s.getNodes)
 		nodes.GET("/:name", s.getNodeStatus)
 		nodes.GET("/:name/service", s.getServiceList)
@@ -131,6 +131,8 @@ func setup() *Args {
 			contextErr := fmt.Errorf("error setting trusted proxies: %v", err)
 			panic(contextErr)
 		}
+	} else {
+		args.Server.SetTrustedProxies(nil)
 	}
 
 	return &args
