@@ -78,9 +78,6 @@ func main() {
 	v1.GET("/pod", s.getPods)
 	v1.GET("/pod/:namespace", s.getPods)
 
-	v1.GET("/staticpod", s.getStaticPods)
-	v1.GET("/staticpod/:namespace", s.getStaticPods)
-
 	v1.GET("/images", s.getImages)
 
 	{
@@ -91,8 +88,6 @@ func main() {
 		nodes.GET("/:name/service/:service", s.getService)
 		nodes.GET("/:name/pod", s.getPods)
 		nodes.GET("/:name/pod/:namespace", s.getPods)
-		nodes.GET("/:name/staticpod", s.getStaticPods)
-		nodes.GET("/:name/staticpod/:namespace", s.getStaticPods)
 	}
 
 	s.NoRoute(func(c *gin.Context) {
@@ -150,6 +145,7 @@ func (s *Server) getPods(c *gin.Context) {
 	)
 	node = c.Param("name")
 	namespace = c.Param("namespace")
+	static := bool(c.Query("static") == "true")
 
 	if node != "" {
 		opts.FieldSelector = "spec.nodeName=" + node
@@ -162,58 +158,30 @@ func (s *Server) getPods(c *gin.Context) {
 	}
 
 	status := http.StatusOK
+	var ok bool
+
 	for _, pod := range podList {
-		response.Pods = append(response.Pods, &pod.SimplePod)
-		for _, cond := range pod.Pod.Status.Conditions {
-			// All conditions except NodeReady should be false
-			if cond.Type == corev1.PodReady && cond.Status != corev1.ConditionTrue && cond.Reason != "PodCompleted" {
-				status = http.StatusExpectationFailed
-				response.Errors = append(response.Errors,
-					fmt.Sprintf("Pod '%s/%s' not ready: %s", pod.Namespace, pod.Name, cond.Message))
+		ok = false
+		if static {
+			for _, mf := range pod.ManagedFields {
+				if mf.Manager == "kubelet" {
+					response.Pods = append(response.Pods, &pod.SimplePod)
+					ok = true
+				}
 			}
+		} else {
+			response.Pods = append(response.Pods, &pod.SimplePod)
+			ok = true
 		}
-	}
 
-	c.IndentedJSON(status, response)
-}
-
-func (s *Server) getStaticPods(c *gin.Context) {
-	var (
-		node      string
-		namespace string
-		opts      metav1.ListOptions
-		response  struct {
-			Pods   []*k8s.SimplePod `json:"pods"`
-			Errors []string         `json:"errors"`
-		}
-	)
-
-	node = c.Param("name")
-	namespace = c.Param("namespace")
-
-	if node != "" {
-		opts.FieldSelector = "spec.nodeName=" + node
-	}
-
-	podList, err := s.k8s.GetPods(namespace, opts)
-	if err != nil {
-		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
-	}
-
-	status := http.StatusOK
-	for _, pod := range podList {
-		for _, mf := range pod.ManagedFields {
-			if mf.Manager == "kubelet" {
-				response.Pods = append(response.Pods, &pod.SimplePod)
-			}
-		}
-		for _, cond := range pod.Pod.Status.Conditions {
-			// All conditions except NodeReady should be false
-			if cond.Type == corev1.PodReady && cond.Status != corev1.ConditionTrue && cond.Reason != "PodCompleted" {
-				status = http.StatusExpectationFailed
-				response.Errors = append(response.Errors,
-					fmt.Sprintf("Pod '%s/%s' not ready: %s", pod.Namespace, pod.Name, cond.Message))
+		if ok {
+			for _, cond := range pod.Pod.Status.Conditions {
+				// All conditions except NodeReady should be false
+				if cond.Type == corev1.PodReady && cond.Status != corev1.ConditionTrue && cond.Reason != "PodCompleted" {
+					status = http.StatusExpectationFailed
+					response.Errors = append(response.Errors,
+						fmt.Sprintf("Pod '%s/%s' not ready: %s", pod.Namespace, pod.Name, cond.Message))
+				}
 			}
 		}
 	}
