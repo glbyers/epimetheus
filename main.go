@@ -163,8 +163,8 @@ func (s *Server) getPods(c *gin.Context) {
 	for _, pod := range podList {
 		ok = false
 		if static {
-			for _, mf := range pod.ManagedFields {
-				if mf.Manager == "kubelet" {
+			for _, ref := range pod.GetOwnerReferences() {
+				if ref.Kind == "Node" {
 					response.Pods = append(response.Pods, &pod.SimplePod)
 					ok = true
 				}

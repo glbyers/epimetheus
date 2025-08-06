@@ -74,7 +74,6 @@ func (c *Client) GetServiceList(nodes []string) ([]*machine.ServiceList, error) 
 	serviceList, err := c.ServiceList(client.WithNodes(context.Background(), nodes...))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())
-
 	}
 	if serviceList == nil {
 		return nil, fmt.Errorf("error listing services: %w", err)
