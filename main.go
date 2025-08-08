@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"github.com/glbyers/epimetheus/k8s"
 	"github.com/glbyers/epimetheus/talos"
 	"github.com/thanhpk/randstr"
@@ -36,7 +37,10 @@ type Args struct {
 }
 
 func main() {
-	args := setup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	args := setup(ctx)
 
 	s := args.Server
 	s.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
@@ -79,6 +83,7 @@ func main() {
 	v1.GET("/pod/:namespace", s.getPods)
 
 	v1.GET("/images", s.getImages)
+	v1.GET("/time/:server", s.getTimeCheck)
 
 	{
 		nodes := v1.Group("/node")
@@ -88,6 +93,8 @@ func main() {
 		nodes.GET("/:name/service/:service", s.getService)
 		nodes.GET("/:name/pod", s.getPods)
 		nodes.GET("/:name/pod/:namespace", s.getPods)
+		nodes.GET("/:name/info", s.getNodeSystemInfo)
+		nodes.GET("/:name/metadata", s.getNodeMetadata)
 	}
 
 	s.NoRoute(func(c *gin.Context) {
@@ -102,7 +109,7 @@ func main() {
 	}
 }
 
-func setup() *Args {
+func setup(ctx context.Context) *Args {
 	args := Args{
 		Listen:   getEnv("LISTEN_ADDRESS", "127.0.0.1:8080"),
 		Username: getEnv("AUTH_USERNAME", "ghost"),
@@ -114,9 +121,13 @@ func setup() *Args {
 		fmt.Printf("WARNING: Using randomly generated credentials: %s:%s\n", args.Username, args.Password)
 	}
 
+	apidClient, err := talos.New(ctx)
+	if err != nil {
+		panic(err.Error())
+	}
 	args.Server = &Server{
 		k8s:    k8s.New(),
-		talos:  talos.New(),
+		talos:  apidClient,
 		Engine: gin.New(),
 	}
 
@@ -127,6 +138,7 @@ func setup() *Args {
 			panic(contextErr)
 		}
 	} else {
+		//goland:noinspection GoUnhandledErrorResult
 		args.Server.SetTrustedProxies(nil)
 	}
 
@@ -145,7 +157,7 @@ func (s *Server) getPods(c *gin.Context) {
 	)
 	node = c.Param("name")
 	namespace = c.Param("namespace")
-	static := bool(c.Query("static") == "true")
+	static := c.Query("static") == "true"
 
 	if node != "" {
 		opts.FieldSelector = "spec.nodeName=" + node
@@ -222,7 +234,10 @@ func (s *Server) getServiceList(c *gin.Context) {
 		}
 	}
 
-	serviceList, err := s.talos.GetServiceList(nodes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serviceList, err := s.talos.GetServiceList(ctx, nodes)
 	if err != nil {
 		if serviceList == nil {
 			c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
@@ -292,7 +307,10 @@ func (s *Server) getService(c *gin.Context) {
 		}
 	}
 
-	services, err := s.talos.GetServiceInfo(nodes, service)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	services, err := s.talos.GetServiceInfo(ctx, nodes, service)
 	if err != nil {
 		if services == nil {
 			c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
@@ -347,8 +365,10 @@ func (s *Server) getEtcdStatus(c *gin.Context) {
 		nodes = append(nodes, node.Address)
 	}
 
-	etcdStatusList, err = s.talos.GetEtcdStatus(nodes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
+	etcdStatusList, err = s.talos.GetEtcdStatus(ctx, nodes)
 	if err != nil {
 		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
@@ -390,7 +410,10 @@ func (s *Server) getEtcdAlarms(c *gin.Context) {
 		nodes = append(nodes, node.Address)
 	}
 
-	alarms, err = s.talos.GetEtcdAlarms(nodes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	alarms, err = s.talos.GetEtcdAlarms(ctx, nodes)
 	if err != nil {
 		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
@@ -457,11 +480,55 @@ func (s *Server) getImages(c *gin.Context) {
 		nodes = append(nodes, node.Name)
 	}
 
-	images, err = s.talos.GetImageList(nodes, common.ContainerdNamespace_NS_CRI)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	images, err = s.talos.GetImageList(ctx, nodes, common.ContainerdNamespace_NS_CRI)
 	if err != nil {
 		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.IndentedJSON(http.StatusOK, images)
+}
+
+func (s *Server) getTimeCheck(c *gin.Context) {
+	ntpServer := c.Param("server")
+
+	resp, err := s.talos.TimeCheck(context.Background(), ntpServer)
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.IndentedJSON(http.StatusOK, resp)
+}
+
+func (s *Server) getNodeSystemInfo(c *gin.Context) {
+	node, err := s.k8s.GetNode(c.Param("name"))
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := s.talos.GetNodeSystemInfo(context.Background(), node.Name)
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.IndentedJSON(http.StatusOK, resp)
+}
+
+func (s *Server) getNodeMetadata(c *gin.Context) {
+	node, err := s.k8s.GetNode(c.Param("name"))
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := s.talos.GetNodeMetadata(context.Background(), node.Name)
+	if err != nil {
+		c.IndentedJSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.IndentedJSON(http.StatusOK, resp)
 }
