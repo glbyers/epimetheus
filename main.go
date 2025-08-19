@@ -157,10 +157,15 @@ func (s *Server) getPods(c *gin.Context) {
 	)
 	node = c.Param("name")
 	namespace = c.Param("namespace")
+	label := c.Query("label")
 	static := c.Query("static") == "true"
 
 	if node != "" {
 		opts.FieldSelector = "spec.nodeName=" + node
+	}
+
+	if label != "" {
+		opts.LabelSelector = label
 	}
 
 	podList, err := s.k8s.GetPods(namespace, opts)
